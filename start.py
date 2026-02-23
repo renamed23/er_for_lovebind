@@ -110,11 +110,6 @@ def replace():
     translate_lib.system(
         f"{PACKER} pack -i generated/translated -o generated/dist/RealLive_chs.pak")
 
-    translate_lib.copy_path(
-        "assets/raw_text", "generated/raw_text", overwrite=True)
-    translate_lib.copy_path(
-        "assets/translated_text", "generated/translated_text", overwrite=True)
-
     translate_lib.merge_directories(
         "assets/dist_pass", "generated/dist", overwrite=True
     )
