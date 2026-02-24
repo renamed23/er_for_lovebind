@@ -387,12 +387,13 @@ class TextHookBuilder:
                 print(f"复制 {filename}")
                 copy_path(str(src_file), str(self.assets_dir), overwrite=True)
 
-    def build_dll(self, features, panic="unwind", clean=False):
+    def build_dll(self, features, arch="x86", panic="unwind", clean=False):
         """
         构建 DLL 文件
 
         参数:
             features (List[str]): cargo build 的 features 参数
+            arch (str): "x86" 或 "x64"（默认 "x86"）
             panic (str): "unwind", "abort", "immediate-abort"（默认 "unwind"）
             clean (bool): 是否在构建前执行 `cargo clean`（默认 False）
         """
@@ -402,83 +403,71 @@ class TextHookBuilder:
                 "panic 参数必须是 'unwind', 'abort', 'immediate-abort' 其中之一"
             )
 
+        # 1. 架构映射逻辑
+        if arch == "x86":
+            alias = "build-text-hook"
+            source_dll_rel = Path(
+                "target/i686-pc-windows-msvc/release/text_hook.dll")
+        elif arch == "x64":
+            alias = "build-text-hook64"
+            source_dll_rel = Path(
+                "target/x86_64-pc-windows-msvc/release/text_hook.dll")
+        else:
+            raise ValueError("arch 参数必须是 'x86' 或 'x64'")
+
         # 确保 dist 目录存在
         self.dist_dir.mkdir(parents=True, exist_ok=True)
 
-        # 判断是否为 immediate-abort 模式
-        is_immediate_abort = panic == "immediate-abort"
-
-        # 根据模式构建不同的命令和 RUSTFLAGS
-        features = ",".join(features)
-        if is_immediate_abort:
+        # 2. 组装 RUSTFLAGS 和命令
+        features_joined = ",".join(features)
+        if panic == "immediate-abort":
             # immediate-abort 需要 nightly 工具链和 unstable 选项
-            build_command = (
-                f"cargo +nightly build --release --features {features} -Z build-std"
-            )
+            build_command = f"cargo +nightly {alias} --features {features_joined} -Z build-std"
             rustflags = "-C panic=immediate-abort -Z unstable-options"
             print(f"使用 Nightly 工具链编译 (immediate-abort 模式)")
         else:
-            # unwind 或 abort 使用标准构建
-            build_command = f"cargo build --release --features {features}"
+            build_command = f"cargo {alias} --features {features_joined}"
             rustflags = f"-C panic={panic}"
 
-        crate_dir = self.project_path / "crates" / "text-hook"
-
-        print(f"在目录 {crate_dir} 中执行构建命令: {build_command}")
-        print(f"使用 panic 策略: {panic}")
+        print(f"在项目根目录 {self.project_path} 中执行构建命令: {build_command}")
+        print(f"目标架构: {arch}, 使用 panic 策略: {panic}")
 
         # 设置 RUSTFLAGS
         os.environ["RUSTFLAGS"] = rustflags
 
-        # 可选：先清理以确保依赖按新策略重新编译（当切换策略时建议使用）
+        # 3. 执行构建流程
         if clean:
             print("执行 cargo clean 以确保所有依赖按新策略重新编译...")
-            # clean 不需要指定 +nightly，只是删除文件
-            system("cargo clean", cwd=str(crate_dir))
+            system("cargo clean", cwd=str(self.project_path))
 
-        # 执行构建命令
-        system(build_command, cwd=str(crate_dir))
+        # 执行构建
+        system(build_command, cwd=str(self.project_path))
 
-        # 复制生成的 DLL 文件
-        source_dll = (
-            self.project_path
-            / "target"
-            / "i686-pc-windows-msvc"
-            / "release"
-            / "text_hook.dll"
-        )
+        # 4. 复制生成的 DLL 文件
+        source_dll = self.project_path / source_dll_rel
         if not source_dll.exists():
-            raise FileNotFoundError("找不到生成的 DLL 文件")
+            raise FileNotFoundError(f"找不到生成的 DLL 文件: {source_dll}")
 
         dest_dll = self.dist_dir / "text_hook.dll"
         copy_path(str(source_dll), str(dest_dll), overwrite=True)
 
-        # 检查 hijacked 目录
+        # 5. 检查 hijacked 目录并重命名
         hijacked_dir = self.current_dir / "assets" / "hijacked"
         if hijacked_dir.exists() and any(hijacked_dir.iterdir()):
             print(f"检测到非空的 hijacked 目录: {hijacked_dir}")
-
-            # 获取 hijacked 目录中的所有文件
             hijacked_files = list(hijacked_dir.iterdir())
 
             if len(hijacked_files) == 1:
-                # 如果只有一个文件，使用该文件名
-                hijacked_file = hijacked_files[0]
-                new_dll_name = hijacked_file.name
-
+                new_dll_name = hijacked_files[0].name
                 print(f"将 DLL 重命名为: {new_dll_name}")
-
-                # 使用现有的 rename_file 函数重命名 DLL 文件
                 rename_file(str(dest_dll), new_dll_name, overwrite=True)
             else:
-                print(
-                    f"警告: hijacked 目录包含 {len(hijacked_files)} 个文件，但预期只有1个文件"
-                )
+                print(f"警告: hijacked 目录包含 {len(hijacked_files)} 个文件，但预期只有1个文件")
                 print("跳过 DLL 重命名")
         else:
             print(f"hijacked 目录不存在或为空: {hijacked_dir}")
 
-        # 检查 assets 中是否有 dist 目录，有则合并到 dist_dir
+        # 6. 检查 assets 中是否有 dist 目录，有则合并到 dist_dir
         assets_dist = self.assets_dir / "dist"
         if assets_dist.exists():
             print(f"检测到 assets 中的 dist 目录，合并到: {self.dist_dir}")
@@ -488,24 +477,25 @@ class TextHookBuilder:
 
         print(f"DLL 构建并复制成功: {dest_dll}")
 
-    def build(self, features, panic="unwind", clean=False):
+    def build(self, features, arch="x86", panic="unwind", clean=False):
         """
         完整的构建流程
 
         参数:
             features (List[str]): cargo build 的 features 参数
+            arch (str): "x86" 或 "x64"
             panic (str): "unwind", "abort", "immediate-abort"（默认 "unwind"）
             clean (bool): 是否在构建前执行 `cargo clean`（默认 False）
         """
-        print("开始构建流程...")
+        print(f"开始构建流程 ({arch})...")
         print(f"panic 策略: {panic}")
 
         # 复制资源文件
         self.copy_assets_for_build()
         print("资源文件复制完成")
 
-        # 构建 DLL（会临时设置 RUSTFLAGS）
-        self.build_dll(features, panic=panic, clean=clean)
+        # 构建 DLL
+        self.build_dll(features, arch=arch, panic=panic, clean=clean)
         print("构建流程完成")
 
 
