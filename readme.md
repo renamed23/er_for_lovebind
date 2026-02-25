@@ -1,5 +1,7 @@
 # LOVEBIND
 
+[![MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 如果项目需要使用[text_hook](https://github.com/renamed23/translate-tools)，请设置环境变量`TEXT_HOOK_PROJECT_PATH`为`text_hook`的绝对路径，并确保已安装rust工具链(stable+nightly>=1.93.0)
 
 ```cmd
